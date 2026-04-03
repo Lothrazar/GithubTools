@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitHub Repo Branch Auditor</title>
+  <link rel="stylesheet" href="../css/shared.css" />
+  <style>
+    .stat-lbl { font-family: monospace; }
+    .branch { font-family: monospace; font-size: 12px; background: #f0efe8; padding: 2px 8px; border-radius: 6px; display: inline-block; }
+    .col-name { width: 45%; }
+    .col-branch { width: 35%; }
+    .col-updated { width: 20%; font-size: 12px; color: #888; }
+  </style>
+</head>
+<body>
+  <h1>GitHub Repo Branch Auditor</h1>
+  <p class="subtitle">
+    Add a token for 5,000 req/hr instead of 60. Generate one at
+    <a href="https://github.com/settings/tokens" target="_blank">github.com/settings/tokens</a>
+    — only needs <code>public_repo</code> scope (read-only). Token is saved to localStorage in your browser only.
+  </p>
+
+  <div class="controls mb">
+    <input type="text" id="username" placeholder="GitHub username" value="lothrazar" />
+    <input type="password" id="token" placeholder="ghp_... personal access token (optional)" oninput="saveToken()" />
+    <span id="rate-badge" class="rate-badge anon">Unauthenticated — 60 req/hr</span>
+  </div>
+
+  <div class="controls">
+    <button onclick="loadRepos()" id="load-btn">Audit repos</button>
+    <input type="text" id="search" placeholder="Filter by repo or branch..." oninput="render()" />
+    <select id="branch-filter" onchange="render()"><option value="all">All branches</option></select>
+  </div>
+
+  <div class="stats" id="stats"></div>
+  <div id="table-wrap"><div class="loading">Enter a username and click Audit repos.</div></div>
+  <div id="error" class="error-msg" style="display:none"></div>
+
+  <script>
+    let allRepos = [];
+    let sortCol = 'name';
+    let sortDir = 1;
+
+    const cols = [
+      { key: 'name',           label: 'Repo',           cls: 'col-name' },
+      { key: 'default_branch', label: 'Default branch', cls: 'col-branch' },
+      { key: 'pushed_at',      label: 'Last push',      cls: 'col-updated' },
+    ];
+
+    function getToken() {
+      return document.getElementById('token').value.trim();
+    }
+
+    function saveToken() {
+      const t = getToken();
+      if (t) localStorage.setItem('gh_token', t);
+      else localStorage.removeItem('gh_token');
+      updateRateBadge();
+    }
+
+    function updateRateBadge() {
+      const badge = document.getElementById('rate-badge');
+      if (getToken()) {
+        badge.textContent = 'Authenticated — 5,000 req/hr';
+        badge.className = 'rate-badge auth';
+      } else {
+        badge.textContent = 'Unauthenticated — 60 req/hr';
+        badge.className = 'rate-badge anon';
+      }
+    }
+
+    function authHeaders() {
+      const t = getToken();
+      const h = { 'Accept': 'application/vnd.github+json' };
+      if (t) h['Authorization'] = `Bearer ${t}`;
+      return h;
+    }
+
+    function sortRepos(repos) {
+      return [...repos].sort((a, b) => {
+        let av = a[sortCol] || '';
+        let bv = b[sortCol] || '';
+        if (sortCol === 'pushed_at') {
+          av = av ? new Date(av).getTime() : 0;
+          bv = bv ? new Date(bv).getTime() : 0;
+          return sortDir * (av - bv);
+        }
+        return sortDir * av.localeCompare(bv);
+      });
+    }
+
+    function setSort(key) {
+      if (sortCol === key) sortDir *= -1;
+      else { sortCol = key; sortDir = 1; }
+      render();
+    }
+
+    function render() {
+      const search = document.getElementById('search').value.toLowerCase();
+      const bf = document.getElementById('branch-filter').value;
+      const user = document.getElementById('username').value.trim();
+
+      let repos = allRepos.filter(r => {
+        const matchText = r.name.toLowerCase().includes(search) || (r.default_branch || '').toLowerCase().includes(search);
+        if (!matchText) return false;
+        if (bf !== 'all' && r.default_branch !== bf) return false;
+        return true;
+      });
+
+      repos = sortRepos(repos);
+
+      const thead = `<thead><tr>${cols.map(c => {
+        const active = sortCol === c.key;
+        const arrow = active ? (sortDir === 1 ? '▲' : '▼') : '▲';
+        return `<th class="${c.cls}${active ? ' sorted' : ''}" onclick="setSort('${c.key}')">${c.label}<span class="sort-arrow">${arrow}</span></th>`;
+      }).join('')}</tr></thead>`;
+
+      if (repos.length === 0) {
+        document.getElementById('table-wrap').innerHTML = '<div class="empty">No repos match your filter.</div>';
+        return;
+      }
+
+      const rows = repos.map(r => {
+        const updated = r.pushed_at
+          ? new Date(r.pushed_at).toLocaleDateString('en-CA', { year: '2-digit', month: 'short', day: 'numeric' })
+          : '—';
+        return `<tr>
+          <td class="col-name"><a href="https://github.com/${user}/${r.name}" target="_blank">${r.name}</a></td>
+          <td class="col-branch"><span class="branch">${r.default_branch || '—'}</span></td>
+          <td class="col-updated">${updated}</td>
+        </tr>`;
+      }).join('');
+
+      document.getElementById('table-wrap').innerHTML = `<table>${thead}<tbody>${rows}</tbody></table>`;
+    }
+
+    function buildStats(repos) {
+      const counts = {};
+      for (const r of repos) {
+        const b = r.default_branch || '(none)';
+        counts[b] = (counts[b] || 0) + 1;
+      }
+      const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+
+      const sel = document.getElementById('branch-filter');
+      const prev = sel.value;
+      sel.innerHTML = '<option value="all">All branches</option>' +
+        sorted.map(([b, c]) => `<option value="${b}">${b} (${c})</option>`).join('');
+      if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+
+      document.getElementById('stats').innerHTML = sorted.map(([b, c]) => `
+        <div class="stat">
+          <div class="stat-val">${c}</div>
+          <div class="stat-lbl">${b}</div>
+        </div>`).join('');
+    }
+
+    async function loadRepos() {
+      const user = document.getElementById('username').value.trim();
+      if (!user) return;
+
+      const errEl = document.getElementById('error');
+      errEl.style.display = 'none';
+      document.getElementById('table-wrap').innerHTML = `<div class="loading">Loading repos for ${user}...</div>`;
+      document.getElementById('stats').innerHTML = '';
+      document.getElementById('load-btn').disabled = true;
+
+      allRepos = [];
+      let page = 1;
+      try {
+        while (true) {
+          const res = await fetch(`https://api.github.com/users/${encodeURIComponent(user)}/repos?per_page=100&page=${page}`, { headers: authHeaders() });
+          if (res.status === 403 || res.status === 429) {
+            const msg = await res.json().catch(() => ({}));
+            const extra = !getToken() ? ' Add a GitHub token above to increase your rate limit to 5,000/hr.' : '';
+            throw new Error((msg.message || `API error ${res.status}`) + extra);
+          }
+          if (!res.ok) throw new Error(`GitHub API returned ${res.status} — check the username`);
+          const data = await res.json();
+          if (!data.length) break;
+          allRepos = allRepos.concat(data.filter(r => !r.fork));
+          if (data.length < 100) break;
+          page++;
+        }
+        allRepos.sort((a, b) => a.name.localeCompare(b.name));
+        buildStats(allRepos);
+        render();
+      } catch (e) {
+        document.getElementById('table-wrap').innerHTML = '';
+        errEl.textContent = e.message;
+        errEl.style.display = 'block';
+      } finally {
+        document.getElementById('load-btn').disabled = false;
+      }
+    }
+
+    document.getElementById('username').addEventListener('keydown', e => { if (e.key === 'Enter') loadRepos(); });
+
+    const saved = localStorage.getItem('gh_token');
+    if (saved) { document.getElementById('token').value = saved; updateRateBadge(); }
+  </script>
+</body>
+</html>

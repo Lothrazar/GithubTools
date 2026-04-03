@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitHub Issue Auditor</title>
+  <link rel="stylesheet" href="../css/shared.css" />
+  <style>
+    td.num { font-variant-numeric: tabular-nums; text-align: right; }
+    th.num { text-align: right; }
+    .zero { color: #ccc; }
+    .has-items { font-weight: 500; }
+    .pr-count { color: #185FA5; }
+    .untagged-count { color: #854F0B; }
+    .tagged-count { color: #3B6D11; }
+    .col-name { width: 32%; }
+    .col-pr { width: 17%; }
+    .col-untagged { width: 17%; }
+    .col-tagged { width: 17%; }
+    .col-total { width: 17%; }
+    .progress-wrap { margin-bottom: 1.25rem; }
+    .progress-bar-bg { background: #e8e8e4; border-radius: 99px; height: 6px; overflow: hidden; }
+    .progress-bar-fill { background: #3B6D11; height: 6px; border-radius: 99px; transition: width 0.2s; }
+    .progress-label { font-size: 12px; color: #888; margin-bottom: 4px; }
+    .hint { font-size: 12px; color: #aaa; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <h1>GitHub Issue Auditor</h1>
+  <p class="subtitle">
+    Add a token for 5,000 req/hr instead of 60. Generate one at
+    <a href="https://github.com/settings/tokens" target="_blank">github.com/settings/tokens</a>
+    — only needs <code>public_repo</code> scope (read-only). Token is saved to localStorage in your browser only.
+  </p>
+
+  <div class="controls mb">
+    <input type="text" id="username" placeholder="GitHub username" value="lothrazar" />
+    <input type="password" id="token" placeholder="ghp_... personal access token (optional)" oninput="saveToken()" />
+    <span id="rate-badge" class="rate-badge anon">Unauthenticated — 60 req/hr</span>
+  </div>
+
+  <div class="controls">
+    <button onclick="startAudit()" id="load-btn">Audit repos</button>
+    <button onclick="cancelAudit()" id="cancel-btn" style="display:none">Cancel</button>
+    <input type="text" id="search" placeholder="Filter by repo name..." oninput="render()" />
+    <select id="view-filter" onchange="render()">
+      <option value="all">All repos</option>
+      <option value="has-issues">Has open issues</option>
+      <option value="has-prs">Has open PRs</option>
+      <option value="clean">Fully clean</option>
+    </select>
+  </div>
+
+  <div class="progress-wrap" id="progress-wrap" style="display:none">
+    <div class="progress-label" id="progress-label">Loading...</div>
+    <div class="progress-bar-bg"><div class="progress-bar-fill" id="progress-bar" style="width:0%"></div></div>
+  </div>
+
+  <div class="stats" id="stats"></div>
+  <div id="table-wrap"><div class="loading">Enter a username and click Audit repos.</div></div>
+  <div id="error" class="error-msg" style="display:none"></div>
+  <p class="hint" id="hint"></p>
+
+  <script>
+    let allData = [];
+    let sortCol = 'name';
+    let sortDir = 1;
+    let cancelled = false;
+
+    const cols = [
+      { key: 'name',     label: 'Repo',             cls: 'col-name',         num: false },
+      { key: 'prs',      label: 'Open PRs',          cls: 'col-pr num',       num: true  },
+      { key: 'untagged', label: 'Untagged issues',   cls: 'col-untagged num', num: true  },
+      { key: 'tagged',   label: 'Tagged issues',     cls: 'col-tagged num',   num: true  },
+      { key: 'total',    label: 'Total open issues', cls: 'col-total num',    num: true  },
+    ];
+
+    function getToken() {
+      return document.getElementById('token').value.trim();
+    }
+
+    function saveToken() {
+      const t = getToken();
+      if (t) localStorage.setItem('gh_token', t);
+      else localStorage.removeItem('gh_token');
+      updateRateBadge();
+    }
+
+    function updateRateBadge() {
+      const badge = document.getElementById('rate-badge');
+      if (getToken()) {
+        badge.textContent = 'Authenticated — 5,000 req/hr';
+        badge.className = 'rate-badge auth';
+      } else {
+        badge.textContent = 'Unauthenticated — 60 req/hr';
+        badge.className = 'rate-badge anon';
+      }
+    }
+
+    function authHeaders() {
+      const t = getToken();
+      const h = { 'Accept': 'application/vnd.github+json' };
+      if (t) h['Authorization'] = `Bearer ${t}`;
+      return h;
+    }
+
+    function setSort(key) {
+      if (sortCol === key) sortDir *= -1;
+      else { sortCol = key; sortDir = 1; }
+      render();
+    }
+
+    function sortData(data) {
+      return [...data].sort((a, b) => {
+        const av = a[sortCol] ?? '';
+        const bv = b[sortCol] ?? '';
+        if (typeof av === 'number') return sortDir * (av - bv);
+        return sortDir * String(av).localeCompare(String(bv));
+      });
+    }
+
+    function render() {
+      const search = document.getElementById('search').value.toLowerCase();
+      const vf = document.getElementById('view-filter').value;
+
+      let data = allData.filter(r => {
+        if (!r.name.toLowerCase().includes(search)) return false;
+        if (vf === 'has-issues') return r.total > 0;
+        if (vf === 'has-prs') return r.prs > 0;
+        if (vf === 'clean') return r.total === 0 && r.prs === 0;
+        return true;
+      });
+
+      data = sortData(data);
+
+      const totalPRs      = allData.reduce((s, r) => s + r.prs, 0);
+      const totalUntagged = allData.reduce((s, r) => s + r.untagged, 0);
+      const totalTagged   = allData.reduce((s, r) => s + r.tagged, 0);
+      const reposNeedAttn = allData.filter(r => r.total > 0 || r.prs > 0).length;
+
+      document.getElementById('stats').innerHTML = `
+        <div class="stat"><div class="stat-val">${allData.length}</div><div class="stat-lbl">Repos scanned</div></div>
+        <div class="stat"><div class="stat-val" style="color:#185FA5">${totalPRs}</div><div class="stat-lbl">Open PRs</div></div>
+        <div class="stat"><div class="stat-val" style="color:#854F0B">${totalUntagged}</div><div class="stat-lbl">Untagged issues</div></div>
+        <div class="stat"><div class="stat-val" style="color:#3B6D11">${totalTagged}</div><div class="stat-lbl">Tagged issues</div></div>
+        <div class="stat"><div class="stat-val">${reposNeedAttn}</div><div class="stat-lbl">Need attention</div></div>
+      `;
+
+      if (data.length === 0) {
+        document.getElementById('table-wrap').innerHTML = '<div class="empty">No repos match your filter.</div>';
+        return;
+      }
+
+      const user = document.getElementById('username').value.trim();
+      const thead = `<thead><tr>${cols.map(c => {
+        const active = sortCol === c.key;
+        const arrow = active ? (sortDir === 1 ? '▲' : '▼') : '▲';
+        const thCls = (c.num ? 'num ' : '') + (active ? 'sorted' : '');
+        return `<th class="${c.cls} ${thCls}" onclick="setSort('${c.key}')">${c.label}<span class="sort-arrow">${arrow}</span></th>`;
+      }).join('')}</tr></thead>`;
+
+      const rows = data.map(r => {
+        const prCell     = r.prs      > 0 ? `<a href="https://github.com/${user}/${r.name}/pulls" target="_blank" class="has-items pr-count">${r.prs}</a>` : `<span class="zero">0</span>`;
+        const untagCell  = r.untagged > 0 ? `<a href="https://github.com/${user}/${r.name}/issues?q=is%3Aissue+is%3Aopen+no%3Alabel" target="_blank" class="has-items untagged-count">${r.untagged}</a>` : `<span class="zero">0</span>`;
+        const taggedCell = r.tagged   > 0 ? `<a href="https://github.com/${user}/${r.name}/issues" target="_blank" class="has-items tagged-count">${r.tagged}</a>` : `<span class="zero">0</span>`;
+        const totalCell  = r.total    > 0 ? `<span class="has-items">${r.total}</span>` : `<span class="zero">0</span>`;
+        return `<tr>
+          <td class="col-name"><a href="https://github.com/${user}/${r.name}/issues" target="_blank">${r.name}</a></td>
+          <td class="col-pr num">${prCell}</td>
+          <td class="col-untagged num">${untagCell}</td>
+          <td class="col-tagged num">${taggedCell}</td>
+          <td class="col-total num">${totalCell}</td>
+        </tr>`;
+      }).join('');
+
+      document.getElementById('table-wrap').innerHTML = `<table>${thead}<tbody>${rows}</tbody></table>`;
+    }
+
+    function cancelAudit() {
+      cancelled = true;
+    }
+
+    async function fetchAllPages(url) {
+      let results = [];
+      let page = 1;
+      while (true) {
+        if (cancelled) throw new Error('cancelled');
+        const res = await fetch(`${url}&page=${page}&per_page=100`, { headers: authHeaders() });
+        if (res.status === 403 || res.status === 429) {
+          const msg = await res.json().catch(() => ({}));
+          const extra = !getToken() ? ' Add a GitHub token above to increase your rate limit to 5,000/hr.' : '';
+          throw new Error((msg.message || `API error ${res.status}`) + extra);
+        }
+        if (!res.ok) throw new Error(`API error ${res.status}`);
+        const data = await res.json();
+        results = results.concat(data);
+        if (data.length < 100) break;
+        page++;
+      }
+      return results;
+    }
+
+    async function startAudit() {
+      const user = document.getElementById('username').value.trim();
+      if (!user) return;
+
+      cancelled = false;
+      allData = [];
+      const errEl = document.getElementById('error');
+      errEl.style.display = 'none';
+      document.getElementById('stats').innerHTML = '';
+      document.getElementById('table-wrap').innerHTML = '<div class="loading">Fetching repo list...</div>';
+      document.getElementById('load-btn').style.display = 'none';
+      document.getElementById('cancel-btn').style.display = '';
+      document.getElementById('progress-wrap').style.display = 'block';
+      document.getElementById('hint').textContent = '';
+
+      try {
+        const repos = await fetchAllPages(`https://api.github.com/users/${encodeURIComponent(user)}/repos?type=owner`);
+        const ownRepos = repos.filter(r => !r.fork && !r.archived);
+
+        for (let i = 0; i < ownRepos.length; i++) {
+          if (cancelled) break;
+          const r = ownRepos[i];
+          const pct = Math.round(((i + 1) / ownRepos.length) * 100);
+          document.getElementById('progress-bar').style.width = pct + '%';
+          document.getElementById('progress-label').textContent = `Scanning ${i + 1} / ${ownRepos.length}: ${r.name}`;
+
+          let prs = 0, tagged = 0, untagged = 0;
+
+          if (r.open_issues_count > 0) {
+            const [issuesRaw, prsRaw] = await Promise.all([
+              fetchAllPages(`https://api.github.com/repos/${user}/${r.name}/issues?state=open`),
+              fetchAllPages(`https://api.github.com/repos/${user}/${r.name}/pulls?state=open`),
+            ]);
+            prs = prsRaw.length;
+            const issues = issuesRaw.filter(i => !i.pull_request);
+            tagged   = issues.filter(i => i.labels && i.labels.length > 0).length;
+            untagged = issues.filter(i => !i.labels || i.labels.length === 0).length;
+          }
+
+          allData.push({ name: r.name, prs, tagged, untagged, total: tagged + untagged });
+          render();
+        }
+
+        if (cancelled) {
+          document.getElementById('hint').textContent = `Cancelled after scanning ${allData.length} repos.`;
+        }
+      } catch (e) {
+        if (e.message !== 'cancelled') {
+          errEl.textContent = e.message;
+          errEl.style.display = 'block';
+        }
+      } finally {
+        document.getElementById('load-btn').style.display = '';
+        document.getElementById('cancel-btn').style.display = 'none';
+        document.getElementById('progress-wrap').style.display = 'none';
+      }
+    }
+
+    document.getElementById('username').addEventListener('keydown', e => { if (e.key === 'Enter') startAudit(); });
+
+    const saved = localStorage.getItem('gh_token');
+    if (saved) { document.getElementById('token').value = saved; updateRateBadge(); }
+  </script>
+</body>
+</html>
