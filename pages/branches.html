@@ -14,16 +14,12 @@
   </style>
 </head>
 <body>
+  <a href="../index.html" class="back-link">← GitHub Tools</a>
   <h1>GitHub Repo Branch Auditor</h1>
-  <p class="subtitle">
-    Add a token for 5,000 req/hr instead of 60. Generate one at
-    <a href="https://github.com/settings/tokens" target="_blank">github.com/settings/tokens</a>
-    — only needs <code>public_repo</code> scope (read-only). Token is saved to localStorage in your browser only.
-  </p>
+  <p class="subtitle">Shows the default branch of every repo across your account. <a href="settings.html">Set an API token</a> for 5,000 req/hr instead of 60.</p>
 
   <div class="controls mb">
     <input type="text" id="username" placeholder="GitHub username" value="lothrazar" />
-    <input type="password" id="token" placeholder="ghp_... personal access token (optional)" oninput="saveToken()" />
     <span id="rate-badge" class="rate-badge anon">Unauthenticated — 60 req/hr</span>
   </div>
 
@@ -37,6 +33,7 @@
   <div id="table-wrap"><div class="loading">Enter a username and click Audit repos.</div></div>
   <div id="error" class="error-msg" style="display:none"></div>
 
+  <script src="../js/shared.js"></script>
   <script>
     let allRepos = [];
     let sortCol = 'name';
@@ -48,34 +45,6 @@
       { key: 'pushed_at',      label: 'Last push',      cls: 'col-updated' },
     ];
 
-    function getToken() {
-      return document.getElementById('token').value.trim();
-    }
-
-    function saveToken() {
-      const t = getToken();
-      if (t) localStorage.setItem('gh_token', t);
-      else localStorage.removeItem('gh_token');
-      updateRateBadge();
-    }
-
-    function updateRateBadge() {
-      const badge = document.getElementById('rate-badge');
-      if (getToken()) {
-        badge.textContent = 'Authenticated — 5,000 req/hr';
-        badge.className = 'rate-badge auth';
-      } else {
-        badge.textContent = 'Unauthenticated — 60 req/hr';
-        badge.className = 'rate-badge anon';
-      }
-    }
-
-    function authHeaders() {
-      const t = getToken();
-      const h = { 'Accept': 'application/vnd.github+json' };
-      if (t) h['Authorization'] = `Bearer ${t}`;
-      return h;
-    }
 
     function sortRepos(repos) {
       return [...repos].sort((a, b) => {
@@ -173,7 +142,7 @@
           const res = await fetch(`https://api.github.com/users/${encodeURIComponent(user)}/repos?per_page=100&page=${page}`, { headers: authHeaders() });
           if (res.status === 403 || res.status === 429) {
             const msg = await res.json().catch(() => ({}));
-            const extra = !getToken() ? ' Add a GitHub token above to increase your rate limit to 5,000/hr.' : '';
+            const extra = !getToken() ? ' Set an API token on the home page to increase your rate limit to 5,000/hr.' : '';
             throw new Error((msg.message || `API error ${res.status}`) + extra);
           }
           if (!res.ok) throw new Error(`GitHub API returned ${res.status} — check the username`);
@@ -197,8 +166,6 @@
 
     document.getElementById('username').addEventListener('keydown', e => { if (e.key === 'Enter') loadRepos(); });
 
-    const saved = localStorage.getItem('gh_token');
-    if (saved) { document.getElementById('token').value = saved; updateRateBadge(); }
   </script>
 </body>
 </html>

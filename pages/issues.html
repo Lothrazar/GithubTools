@@ -26,16 +26,12 @@
   </style>
 </head>
 <body>
+  <a href="../index.html" class="back-link">← GitHub Tools</a>
   <h1>GitHub Issue Auditor</h1>
-  <p class="subtitle">
-    Add a token for 5,000 req/hr instead of 60. Generate one at
-    <a href="https://github.com/settings/tokens" target="_blank">github.com/settings/tokens</a>
-    — only needs <code>public_repo</code> scope (read-only). Token is saved to localStorage in your browser only.
-  </p>
+  <p class="subtitle">Scans all repos for open issues and pull requests, tagged vs. untagged. <a href="settings.html">Set an API token</a> for 5,000 req/hr instead of 60.</p>
 
   <div class="controls mb">
     <input type="text" id="username" placeholder="GitHub username" value="lothrazar" />
-    <input type="password" id="token" placeholder="ghp_... personal access token (optional)" oninput="saveToken()" />
     <span id="rate-badge" class="rate-badge anon">Unauthenticated — 60 req/hr</span>
   </div>
 
@@ -61,6 +57,7 @@
   <div id="error" class="error-msg" style="display:none"></div>
   <p class="hint" id="hint"></p>
 
+  <script src="../js/shared.js"></script>
   <script>
     let allData = [];
     let sortCol = 'name';
@@ -75,34 +72,6 @@
       { key: 'total',    label: 'Total open issues', cls: 'col-total num',    num: true  },
     ];
 
-    function getToken() {
-      return document.getElementById('token').value.trim();
-    }
-
-    function saveToken() {
-      const t = getToken();
-      if (t) localStorage.setItem('gh_token', t);
-      else localStorage.removeItem('gh_token');
-      updateRateBadge();
-    }
-
-    function updateRateBadge() {
-      const badge = document.getElementById('rate-badge');
-      if (getToken()) {
-        badge.textContent = 'Authenticated — 5,000 req/hr';
-        badge.className = 'rate-badge auth';
-      } else {
-        badge.textContent = 'Unauthenticated — 60 req/hr';
-        badge.className = 'rate-badge anon';
-      }
-    }
-
-    function authHeaders() {
-      const t = getToken();
-      const h = { 'Accept': 'application/vnd.github+json' };
-      if (t) h['Authorization'] = `Bearer ${t}`;
-      return h;
-    }
 
     function setSort(key) {
       if (sortCol === key) sortDir *= -1;
@@ -188,7 +157,7 @@
         const res = await fetch(`${url}&page=${page}&per_page=100`, { headers: authHeaders() });
         if (res.status === 403 || res.status === 429) {
           const msg = await res.json().catch(() => ({}));
-          const extra = !getToken() ? ' Add a GitHub token above to increase your rate limit to 5,000/hr.' : '';
+          const extra = !getToken() ? ' Set an API token on the home page to increase your rate limit to 5,000/hr.' : '';
           throw new Error((msg.message || `API error ${res.status}`) + extra);
         }
         if (!res.ok) throw new Error(`API error ${res.status}`);
@@ -260,8 +229,6 @@
 
     document.getElementById('username').addEventListener('keydown', e => { if (e.key === 'Enter') startAudit(); });
 
-    const saved = localStorage.getItem('gh_token');
-    if (saved) { document.getElementById('token').value = saved; updateRateBadge(); }
   </script>
 </body>
 </html>
