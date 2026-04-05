@@ -21,7 +21,10 @@
     .row-archived td { background: #f4f4f2; color: #aaa; }
     .row-archived td a { color: #bbb; }
     .row-fork td { background: #f0f6ff; }
-    .btn-active { outline: 2px solid #185FA5; outline-offset: -2px; }
+    .btn-active  { outline: 2px solid #185FA5; outline-offset: -2px; }
+    .stat        { cursor: pointer; }
+    .stat:hover  { background: #f0f0ec; }
+    .stat-active { outline: 2px solid #185FA5; outline-offset: -2px; }
   </style>
 </head>
 <body>
@@ -180,11 +183,21 @@
         sorted.map(([b, c]) => `<option value="${b}">${b} (${c})</option>`).join('');
       if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
 
-      document.getElementById('stats').innerHTML = sorted.map(([b, c]) => `
-        <div class="stat">
+      const currentSearch = document.getElementById('search').value;
+      document.getElementById('stats').innerHTML = sorted.map(([b, c]) => {
+        const active = currentSearch === b;
+        return `<div class="stat${active ? ' stat-active' : ''}" style="cursor:pointer" onclick="statClick(this)" data-branch="${b.replace(/&/g,'&amp;').replace(/"/g,'&quot;')}">
           <div class="stat-val">${c}</div>
           <div class="stat-lbl">${b}</div>
-        </div>`).join('');
+        </div>`;
+      }).join('');
+    }
+
+    function statClick(el) {
+      const branch = el.dataset.branch;
+      const searchEl = document.getElementById('search');
+      searchEl.value = searchEl.value === branch ? '' : branch;
+      render();
     }
 
     async function loadPRStatuses(user, repos) {
