@@ -8,9 +8,20 @@
   <style>
     .stat-lbl { font-family: monospace; }
     .branch { font-family: monospace; font-size: 12px; background: #f0efe8; padding: 2px 8px; border-radius: 6px; display: inline-block; }
-    .col-name { width: 45%; }
-    .col-branch { width: 35%; }
-    .col-updated { width: 20%; font-size: 12px; color: #888; }
+    .col-pr      { width: 36px; min-width: 36px; text-align: center; padding: 0 4px; }
+    .col-name    { width: 33%; }
+    .col-branch  { width: 22%; }
+    .col-stars   { width: 8%; text-align: right; font-size: 12px; color: #888; }
+    .col-issues  { width: 8%; text-align: right; font-size: 12px; color: #888; }
+    .col-lang    { width: 10%; font-size: 12px; color: #666; }
+    .col-license { width: 12%; font-size: 11px; color: #888; }
+    .col-updated { width: 12%; font-size: 12px; color: #888; }
+    .pr-alert    { font-size: 14px; cursor: default; }
+    .pr-loading  { color: #ccc; font-size: 12px; }
+    .row-archived td { background: #f4f4f2; color: #aaa; }
+    .row-archived td a { color: #bbb; }
+    .row-fork td { background: #f0f6ff; }
+    .btn-active { outline: 2px solid #185FA5; outline-offset: -2px; }
   </style>
 </head>
 <body>
@@ -27,6 +38,8 @@
     <button onclick="loadRepos()" id="load-btn">Audit repos</button>
     <input type="text" id="search" placeholder="Filter by repo or branch..." oninput="render()" />
     <select id="branch-filter" onchange="render()"><option value="all">All branches</option></select>
+    <button id="btn-forks"    onclick="toggleForks()"    class="btn-active">Show forks</button>
+    <button id="btn-archived" onclick="toggleArchived()">Show archived</button>
   </div>
 
   <div class="stats" id="stats"></div>
@@ -38,25 +51,52 @@
     let allRepos = [];
     let sortCol = 'name';
     let sortDir = 1;
+    let prLoadGen = 0;  // increment to cancel an in-flight PR load when repos reload
+    let showArchived = false;
+    let showForks = true;
 
     const cols = [
-      { key: 'name',           label: 'Repo',           cls: 'col-name' },
-      { key: 'default_branch', label: 'Default branch', cls: 'col-branch' },
-      { key: 'pushed_at',      label: 'Last push',      cls: 'col-updated' },
+      { key: 'name',              label: 'Repo',           cls: 'col-name' },
+      { key: 'default_branch',    label: 'Default branch', cls: 'col-branch' },
+      { key: 'stargazers_count',  label: '⭐ Stars',       cls: 'col-stars',  numeric: true },
+      { key: 'open_issues_count', label: '🐛 Issues',      cls: 'col-issues', numeric: true },
+      { key: 'language',           label: 'Language',       cls: 'col-lang' },
+      { key: 'license',           label: 'License',        cls: 'col-license' },
+      { key: 'pushed_at',         label: 'Last push',      cls: 'col-updated' },
     ];
 
 
     function sortRepos(repos) {
+      const colDef = cols.find(c => c.key === sortCol);
       return [...repos].sort((a, b) => {
-        let av = a[sortCol] || '';
-        let bv = b[sortCol] || '';
         if (sortCol === 'pushed_at') {
-          av = av ? new Date(av).getTime() : 0;
-          bv = bv ? new Date(bv).getTime() : 0;
+          const av = a[sortCol] ? new Date(a[sortCol]).getTime() : 0;
+          const bv = b[sortCol] ? new Date(b[sortCol]).getTime() : 0;
           return sortDir * (av - bv);
         }
+        if (colDef && colDef.numeric) {
+          return sortDir * ((a[sortCol] || 0) - (b[sortCol] || 0));
+        }
+        const av = sortCol === 'license' ? (a.license?.spdx_id || '') : String(a[sortCol] || '');
+        const bv = sortCol === 'license' ? (b.license?.spdx_id || '') : String(b[sortCol] || '');
         return sortDir * av.localeCompare(bv);
       });
+    }
+
+    function toggleForks() {
+      showForks = !showForks;
+      const btn = document.getElementById('btn-forks');
+      btn.textContent = showForks ? 'Hide forks' : 'Show forks';
+      btn.classList.toggle('btn-active', showForks);
+      render();
+    }
+
+    function toggleArchived() {
+      showArchived = !showArchived;
+      const btn = document.getElementById('btn-archived');
+      btn.textContent = showArchived ? 'Hide archived' : 'Show archived';
+      btn.classList.toggle('btn-active', showArchived);
+      render();
     }
 
     function setSort(key) {
@@ -74,12 +114,15 @@
         const matchText = r.name.toLowerCase().includes(search) || (r.default_branch || '').toLowerCase().includes(search);
         if (!matchText) return false;
         if (bf !== 'all' && r.default_branch !== bf) return false;
+        if (!showForks    && r.fork)     return false;
+        if (!showArchived && r.archived) return false;
         return true;
       });
 
       repos = sortRepos(repos);
 
-      const thead = `<thead><tr>${cols.map(c => {
+      const prTh = `<th class="col-pr" title="Has pull requests">🔀</th>`;
+      const thead = `<thead><tr>${prTh}${cols.map(c => {
         const active = sortCol === c.key;
         const arrow = active ? (sortDir === 1 ? '▲' : '▼') : '▲';
         return `<th class="${c.cls}${active ? ' sorted' : ''}" onclick="setSort('${c.key}')">${c.label}<span class="sort-arrow">${arrow}</span></th>`;
@@ -92,11 +135,22 @@
 
       const rows = repos.map(r => {
         const updated = r.pushed_at
-          ? new Date(r.pushed_at).toLocaleDateString('en-CA', { year: '2-digit', month: 'short', day: 'numeric' })
+          ? new Date(r.pushed_at).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' })
           : '—';
-        return `<tr>
+        const prCell = r._prs === undefined
+          ? `<td class="col-pr" id="pr-cell-${r.name}"><span class="pr-loading">·</span></td>`
+          : r._prs === 0
+            ? `<td class="col-pr" id="pr-cell-${r.name}"><span class="pr-alert" title="No open pull requests">✅</span></td>`
+            : `<td class="col-pr" id="pr-cell-${r.name}"><span class="pr-alert" title="${r._prs} open pull request${r._prs > 1 ? 's' : ''}">⚠️</span></td>`;
+        const rowClass = r.archived ? 'row-archived' : r.fork ? 'row-fork' : '';
+        return `<tr${rowClass ? ` class="${rowClass}"` : ''}>
+          ${prCell}
           <td class="col-name"><a href="https://github.com/${user}/${r.name}" target="_blank">${r.name}</a></td>
           <td class="col-branch"><span class="branch">${r.default_branch || '—'}</span></td>
+          <td class="col-stars">${r.stargazers_count ?? '—'}</td>
+          <td class="col-issues">${r.open_issues_count ?? '—'}</td>
+          <td class="col-lang">${r.language || '—'}</td>
+          <td class="col-license">${r.license?.spdx_id || '—'}</td>
           <td class="col-updated">${updated}</td>
         </tr>`;
       }).join('');
@@ -125,9 +179,46 @@
         </div>`).join('');
     }
 
+    async function loadPRStatuses(user, repos) {
+      const gen = ++prLoadGen;
+      for (const r of repos) {
+        if (gen !== prLoadGen) break;  // a new load started — stop
+        try {
+          const res = await fetch(
+            `https://api.github.com/repos/${encodeURIComponent(user)}/${encodeURIComponent(r.name)}/pulls?per_page=1&state=open`,
+            { headers: authHeaders() }
+          );
+          if (!res.ok) { r._prs = 0; }
+          else {
+            const data = await res.json();
+            // per_page=1 tells us "any?" — read Link header for total if present
+            if (data.length === 0) {
+              r._prs = 0;
+            } else {
+              // Try to extract total from Link rel="last" page number
+              const link = res.headers.get('Link') || '';
+              const match = link.match(/[?&]page=(\d+)>;\s*rel="last"/);
+              r._prs = match ? parseInt(match[1], 10) : 1;
+            }
+          }
+        } catch (_) {
+          r._prs = 0;  // on error, treat as clean — don't block the loop
+        }
+        // Update the cell in place without a full re-render
+        const cell = document.getElementById(`pr-cell-${r.name}`);
+        if (cell) {
+          cell.innerHTML = r._prs === 0
+            ? `<span class="pr-alert" title="No open pull requests">✅</span>`
+            : `<span class="pr-alert" title="${r._prs} open pull request${r._prs > 1 ? 's' : ''}">⚠️</span>`;
+        }
+      }
+    }
+
     async function loadRepos() {
       const user = document.getElementById('username').value.trim();
       if (!user) return;
+
+      prLoadGen++;  // cancel any in-flight PR load from a previous run
 
       const errEl = document.getElementById('error');
       errEl.style.display = 'none';
@@ -148,13 +239,15 @@
           if (!res.ok) throw new Error(`GitHub API returned ${res.status} — check the username`);
           const data = await res.json();
           if (!data.length) break;
-          allRepos = allRepos.concat(data.filter(r => !r.fork));
+          allRepos = allRepos.concat(data);
           if (data.length < 100) break;
           page++;
         }
         allRepos.sort((a, b) => a.name.localeCompare(b.name));
         buildStats(allRepos);
         render();
+        // Kick off PR status fetch in the background — fills in cells one by one
+        loadPRStatuses(user, allRepos);
       } catch (e) {
         document.getElementById('table-wrap').innerHTML = '';
         errEl.textContent = e.message;

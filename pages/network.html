@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Network Graph — GitHub Tools</title>
+  <link rel="stylesheet" href="../css/shared.css" />
+  <style>
+    #repo { width: 200px; }
+    .progress-wrap { margin-top: 1rem; }
+    .progress-label { font-size: 12px; color: #888; margin-bottom: 4px; }
+    .progress-bar-bg { background: #e8e8e4; border-radius: 99px; height: 6px; overflow: hidden; }
+    .progress-bar-fill { background: #185FA5; height: 6px; border-radius: 99px; transition: width 0.2s; }
+    .hint { font-size: 12px; color: #aaa; margin-top: 6px; }
+
+    .graph-wrap {
+      margin-top: 1rem;
+      border: 0.5px solid #ddd;
+      border-radius: 8px;
+      background: #fff;
+      overflow: hidden;
+      height: 420px;
+      cursor: grab;
+      position: relative;
+      user-select: none;
+    }
+    .graph-wrap.panning { cursor: grabbing; }
+    #graph-svg { width: 100%; height: 100%; display: block; }
+
+    #tooltip {
+      display: none;
+      position: absolute;
+      background: #1a1a18;
+      color: #f0f0ee;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 12px;
+      pointer-events: none;
+      max-width: 280px;
+      z-index: 10;
+      line-height: 1.5;
+    }
+    .tt-sha  { font-family: monospace; font-size: 10px; color: #888; margin-bottom: 2px; }
+    .tt-msg  { font-weight: 500; word-break: break-word; white-space: normal; }
+    .tt-meta { font-size: 11px; color: #999; margin-top: 3px; }
+
+    #legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 0.75rem; align-items: center; }
+    .legend-section { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .legend-label { font-size: 10px; color: #bbb; text-transform: uppercase; letter-spacing: 0.05em; margin-right: 2px; }
+    .legend-item { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #444; font-family: monospace; }
+    .legend-dot  { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .legend-tag  { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+  </style>
+</head>
+<body>
+  <a href="../index.html" class="back-link">← GitHub Tools</a>
+  <h1>Network Graph</h1>
+  <p class="subtitle">
+    Commit and branch history for a repo. Scroll to zoom · drag to pan · hover commits for details.
+    <a href="settings.html">Set an API token</a> for higher rate limits.
+  </p>
+
+  <div class="controls mb">
+    <input type="text" id="username" placeholder="GitHub username" value="lothrazar" />
+    <input type="text" id="repo"     placeholder="Repository name" />
+    <span id="rate-badge" class="rate-badge anon">Unauthenticated — 60 req/hr</span>
+  </div>
+  <div class="controls">
+    <button id="load-btn"      onclick="loadGraph()">Load graph</button>
+    <button id="reset-btn"     onclick="resetView()"  style="display:none">Reset view</button>
+    <button id="toggle-labels" onclick="toggleLayer('labels-group','toggle-labels','Show branches','Hide branches')" style="display:none">Hide branches</button>
+    <button id="toggle-tags"   onclick="toggleLayer('tags-group',  'toggle-tags',  'Show tags',   'Hide tags')"     style="display:none">Hide tags</button>
+  </div>
+
+  <div class="progress-wrap" id="progress-wrap" style="display:none">
+    <div class="progress-label" id="progress-label">Loading…</div>
+    <div class="progress-bar-bg"><div class="progress-bar-fill" id="progress-bar" style="width:0%"></div></div>
+  </div>
+  <div id="error" class="error-msg" style="display:none"></div>
+
+  <div class="graph-wrap" id="graph-wrap" style="display:none">
+    <svg id="graph-svg">
+      <g id="viewport">
+        <g id="axis-group"></g>
+        <g id="edges-group"></g>
+        <g id="nodes-group"></g>
+        <g id="tags-group"></g>
+        <g id="labels-group"></g>
+      </g>
+    </svg>
+    <div id="tooltip"></div>
+  </div>
+
+  <div id="legend" style="display:none"></div>
+  <p id="hint" class="hint"></p>
+
+  <script src="../js/shared.js"></script>
+  <script>
+    // ── constants ──────────────────────────────────────────────────────────
+    const LANE_H         = 30;
+    const COMMIT_SPACING = 20;
+    const COMMIT_R       = 5;
+    const LABEL_AREA_H   = 100;  // vertical space for branch/tag labels
+    const DATE_AXIS_H    = 22;   // space for date ticks below the label area
+    const AXIS_H         = LABEL_AREA_H + DATE_AXIS_H;
+    const PAD_LEFT       = 12;
+    const PAD_RIGHT      = 20;
+    const PAD_BOTTOM     = 16;
+    const MAX_BRANCHES   = 10;
+    const LABEL_SLOT_W   = 11;   // px between stacked labels on the same commit
+
+    const BRANCH_COLORS = [
+      '#185FA5','#3B6D11','#9B4DCA','#C0392B','#854F0B',
+      '#16A085','#2E86C1','#D35400','#8E44AD','#27AE60',
+    ];
+    const TAG_COLOR = '#A0740A';  // amber — distinct from all branch colours
+
+    // ── state ──────────────────────────────────────────────────────────────
+    let commitMap   = {};  // sha → {sha, message, author, date, parents[], lane, x, y}
+    let orderedShas = [];  // shas sorted oldest → newest
+    let branchMeta  = [];  // [{name, sha, lane, color}]
+    let tagMap      = {};  // sha → [tagName, ...]
+
+    let vx = 0, vy = 0, vscale = 1;
+    let dragging = false, dragStartX, dragStartY, dragVX, dragVY;
+
+    // ── svg helper ─────────────────────────────────────────────────────────
+    function svgEl(tag, attrs = {}) {
+      const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+      return e;
+    }
+
+    function clearGroup(id) {
+      const g = document.getElementById(id);
+      while (g.firstChild) g.removeChild(g.firstChild);
+    }
+
+    function escHtml(s) {
+      return String(s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // ── ui helpers ─────────────────────────────────────────────────────────
+    function setProgress(pct, label) {
+      document.getElementById('progress-bar').style.width   = pct + '%';
+      document.getElementById('progress-label').textContent = label;
+    }
+
+    function showError(msg) {
+      const e = document.getElementById('error');
+      e.textContent   = msg;
+      e.style.display = msg ? 'block' : 'none';
+    }
+
+    function toggleLayer(groupId, btnId, showText, hideText) {
+      const g    = document.getElementById(groupId);
+      const btn  = document.getElementById(btnId);
+      const show = g.style.display === 'none';
+      g.style.display = show ? '' : 'none';
+      btn.textContent = show ? hideText : showText;
+    }
+
+    // ── api ────────────────────────────────────────────────────────────────
+    async function apiFetch(url) {
+      const res = await fetch(url, { headers: authHeaders() });
+      if (res.status === 403 || res.status === 429) {
+        const j = await res.json().catch(() => ({}));
+        const extra = !getToken() ? ' Set an API token in Settings for higher rate limits.' : '';
+        throw new Error((j.message || `API error ${res.status}`) + extra);
+      }
+      if (!res.ok) throw new Error(`API error ${res.status} — check the username and repo name.`);
+      return res.json();
+    }
+
+    async function fetchPages(url, maxPages = 3) {
+      let out = [];
+      for (let p = 1; p <= maxPages; p++) {
+        const sep  = url.includes('?') ? '&' : '?';
+        const data = await apiFetch(`${url}${sep}per_page=100&page=${p}`);
+        out = out.concat(data);
+        if (data.length < 100) break;
+      }
+      return out;
+    }
+
+    // ── load ───────────────────────────────────────────────────────────────
+    async function loadGraph() {
+      const user = document.getElementById('username').value.trim();
+      const repo = document.getElementById('repo').value.trim();
+      if (!user || !repo) return;
+
+      commitMap   = {};
+      orderedShas = [];
+      branchMeta  = [];
+      tagMap      = {};
+      showError('');
+      document.getElementById('graph-wrap').style.display    = 'none';
+      document.getElementById('legend').style.display        = 'none';
+      document.getElementById('reset-btn').style.display     = 'none';
+      document.getElementById('toggle-labels').style.display = 'none';
+      document.getElementById('toggle-tags').style.display   = 'none';
+      document.getElementById('hint').textContent            = '';
+      document.getElementById('load-btn').disabled           = true;
+      document.getElementById('progress-wrap').style.display = 'block';
+      // reset toggle button text in case they were renamed
+      document.getElementById('toggle-labels').textContent   = 'Hide branches';
+      document.getElementById('toggle-tags').textContent     = 'Hide tags';
+
+      try {
+        setProgress(5, 'Fetching repo info…');
+        const info = await apiFetch(
+          `https://api.github.com/repos/${encodeURIComponent(user)}/${encodeURIComponent(repo)}`
+        );
+
+        setProgress(10, 'Fetching branches…');
+        const allBranches = await fetchPages(
+          `https://api.github.com/repos/${encodeURIComponent(user)}/${encodeURIComponent(repo)}/branches`, 1
+        );
+
+        // default branch first, then others alphabetically, capped
+        const branches = [
+          allBranches.find(b => b.name === info.default_branch),
+          ...allBranches
+            .filter(b => b.name !== info.default_branch)
+            .sort((a, b) => a.name.localeCompare(b.name)),
+        ].filter(Boolean).slice(0, MAX_BRANCHES);
+
+        for (let i = 0; i < branches.length; i++) {
+          const b   = branches[i];
+          const pct = 15 + Math.round((i / branches.length) * 65);
+          setProgress(pct, `Fetching "${b.name}" (${i + 1} / ${branches.length})…`);
+
+          const commits = await fetchPages(
+            `https://api.github.com/repos/${encodeURIComponent(user)}/${encodeURIComponent(repo)}/commits?sha=${b.commit.sha}`,
+            i === 0 ? 3 : 1
+          );
+
+          for (const c of commits) {
+            if (!commitMap[c.sha]) {
+              commitMap[c.sha] = {
+                sha:     c.sha,
+                message: c.commit.message.split('\n')[0],
+                author:  c.commit.author.name,
+                date:    new Date(c.commit.author.date),
+                parents: c.parents.map(p => p.sha),
+                lane: -1, x: 0, y: 0,
+              };
+            }
+          }
+        }
+
+        setProgress(82, 'Fetching tags…');
+        const allTags = await fetchPages(
+          `https://api.github.com/repos/${encodeURIComponent(user)}/${encodeURIComponent(repo)}/tags`, 1
+        );
+        for (const t of allTags) {
+          if (!tagMap[t.commit.sha]) tagMap[t.commit.sha] = [];
+          tagMap[t.commit.sha].push(t.name);
+        }
+
+        setProgress(95, 'Building layout…');
+        buildGraph(branches);
+        render();
+
+        const hints = [];
+        if (allBranches.length > MAX_BRANCHES)
+          hints.push(`Showing first ${MAX_BRANCHES} of ${allBranches.length} branches.`);
+        if (allTags.length > 0)
+          hints.push(`${allTags.length} tag${allTags.length > 1 ? 's' : ''} loaded.`);
+        document.getElementById('hint').textContent = hints.join('  ');
+
+      } catch (e) {
+        showError(e.message);
+      } finally {
+        document.getElementById('load-btn').disabled           = false;
+        document.getElementById('progress-wrap').style.display = 'none';
+      }
+    }
+
+    // ── layout ─────────────────────────────────────────────────────────────
+    function buildGraph(branches) {
+      orderedShas = Object.keys(commitMap).sort(
+        (a, b) => commitMap[a].date - commitMap[b].date
+      );
+
+      orderedShas.forEach((sha, i) => {
+        commitMap[sha].x = PAD_LEFT + i * COMMIT_SPACING;
+      });
+
+      branchMeta = [];
+      branches.forEach((b, lane) => {
+        const color = BRANCH_COLORS[lane % BRANCH_COLORS.length];
+        branchMeta.push({ name: b.name, sha: b.commit.sha, lane, color });
+
+        let sha = b.commit.sha;
+        while (sha && commitMap[sha] && commitMap[sha].lane === -1) {
+          commitMap[sha].lane = lane;
+          sha = commitMap[sha].parents[0];
+        }
+      });
+
+      for (const sha of orderedShas) {
+        if (commitMap[sha].lane === -1) commitMap[sha].lane = 0;
+      }
+
+      for (const sha of orderedShas) {
+        const c = commitMap[sha];
+        c.y = AXIS_H + c.lane * LANE_H + LANE_H / 2;
+      }
+    }
+
+    // ── render ─────────────────────────────────────────────────────────────
+    function render() {
+      const totalW = PAD_LEFT + orderedShas.length * COMMIT_SPACING + PAD_RIGHT;
+      const totalH = AXIS_H + branchMeta.length * LANE_H + PAD_BOTTOM;
+
+      ['axis-group','edges-group','nodes-group','tags-group','labels-group'].forEach(clearGroup);
+
+      // ── date axis (bottom of the label area)
+      const axisG = document.getElementById('axis-group');
+      const step  = Math.max(1, Math.floor(orderedShas.length / 16));
+
+      for (let i = 0; i < orderedShas.length; i += step) {
+        const c = commitMap[orderedShas[i]];
+        // faint vertical grid line down through commit lanes
+        axisG.appendChild(svgEl('line', {
+          x1: c.x, y1: AXIS_H - 2, x2: c.x, y2: totalH,
+          stroke: '#f0f0ee', 'stroke-width': 1,
+        }));
+        // date label just above commit area
+        const t = svgEl('text', {
+          x: c.x, y: AXIS_H - 6,
+          'font-size': 9, fill: '#bbb', 'text-anchor': 'middle',
+          'font-family': 'system-ui,sans-serif',
+        });
+        t.textContent = c.date.toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: '2-digit' });
+        axisG.appendChild(t);
+      }
+
+      // horizontal axis separator line
+      axisG.appendChild(svgEl('line', {
+        x1: 0, y1: AXIS_H, x2: totalW, y2: AXIS_H,
+        stroke: '#eee', 'stroke-width': 0.5,
+      }));
+
+      // lane guide lines
+      for (const b of branchMeta) {
+        const y = AXIS_H + b.lane * LANE_H + LANE_H / 2;
+        axisG.appendChild(svgEl('line', {
+          x1: 0, y1: y, x2: totalW, y2: y,
+          stroke: '#f5f5f2', 'stroke-width': 1,
+        }));
+      }
+
+      // ── edges
+      const edgesG = document.getElementById('edges-group');
+      for (const sha of orderedShas) {
+        const c     = commitMap[sha];
+        const color = BRANCH_COLORS[c.lane % BRANCH_COLORS.length];
+        for (const pSha of c.parents) {
+          const p = commitMap[pSha];
+          if (!p) continue;
+          const mx = (c.x + p.x) / 2;
+          const d  = c.y === p.y
+            ? `M${c.x},${c.y} L${p.x},${p.y}`
+            : `M${c.x},${c.y} C${mx},${c.y} ${mx},${p.y} ${p.x},${p.y}`;
+          edgesG.appendChild(svgEl('path', {
+            d, fill: 'none', stroke: color,
+            'stroke-width': 1.5, 'stroke-opacity': 0.75,
+          }));
+        }
+      }
+
+      // ── nodes + tooltips
+      const nodesG  = document.getElementById('nodes-group');
+      const tooltip = document.getElementById('tooltip');
+      const wrap    = document.getElementById('graph-wrap');
+
+      function moveTooltip(e) {
+        const r  = wrap.getBoundingClientRect();
+        let tx   = e.clientX - r.left + 14;
+        let ty   = e.clientY - r.top  -  8;
+        const tw = tooltip.offsetWidth  || 220;
+        const th = tooltip.offsetHeight ||  64;
+        if (tx + tw > r.width  - 4) tx = e.clientX - r.left - tw - 8;
+        if (ty + th > r.height - 4) ty = e.clientY - r.top  - th - 8;
+        tooltip.style.left = tx + 'px';
+        tooltip.style.top  = ty + 'px';
+      }
+
+      for (const sha of orderedShas) {
+        const c      = commitMap[sha];
+        const color  = BRANCH_COLORS[c.lane % BRANCH_COLORS.length];
+        const circle = svgEl('circle', {
+          cx: c.x, cy: c.y, r: COMMIT_R,
+          fill: color, stroke: '#fff', 'stroke-width': 1.5,
+          style: 'cursor:pointer',
+        });
+
+        circle.addEventListener('mouseenter', e => {
+          const date = c.date.toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' });
+          const tagLine = tagMap[c.sha]
+            ? `<div class="tt-meta" style="color:${TAG_COLOR}">🏷 ${escHtml(tagMap[c.sha].join(', '))}</div>`
+            : '';
+          tooltip.innerHTML =
+            `<div class="tt-sha">${escHtml(c.sha.slice(0, 7))}</div>` +
+            `<div class="tt-msg">${escHtml(c.message)}</div>` +
+            `<div class="tt-meta">${escHtml(c.author)} · ${date}</div>` +
+            tagLine;
+          tooltip.style.display = 'block';
+          moveTooltip(e);
+        });
+        circle.addEventListener('mousemove',  moveTooltip);
+        circle.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+
+        nodesG.appendChild(circle);
+      }
+
+      // ── vertical labels (branches + tags)
+      // Track the next x-slot for each commit so labels don't overlap
+      const labelSlot = {};  // sha → slot count
+      const slotX = sha => {
+        labelSlot[sha] = labelSlot[sha] || 0;
+        return (labelSlot[sha]++) * LABEL_SLOT_W;
+      };
+
+      function makeVertLabel(text, cx, xOff, color, fontWeight = '500') {
+        const t = svgEl('text', {
+          // translate to (cx + xOff, just above date axis), then rotate -90°
+          // text-anchor="start" → extends upward into the LABEL_AREA_H space
+          transform: `translate(${cx + xOff}, ${AXIS_H - DATE_AXIS_H - 4}) rotate(-90)`,
+          'text-anchor': 'start',
+          'font-size': 9,
+          'font-weight': fontWeight,
+          fill: color,
+          'font-family': 'system-ui,sans-serif',
+        });
+        t.textContent = text;
+        return t;
+      }
+
+      // branch labels at each branch tip
+      const labelsG = document.getElementById('labels-group');
+      for (const b of branchMeta) {
+        const tip = commitMap[b.sha];
+        if (!tip) continue;
+        labelsG.appendChild(makeVertLabel(b.name, tip.x, slotX(tip.sha), b.color));
+      }
+
+      // tag labels at each tagged commit
+      const tagsG = document.getElementById('tags-group');
+      for (const [sha, names] of Object.entries(tagMap)) {
+        const c = commitMap[sha];
+        if (!c) continue;
+        for (const name of names) {
+          tagsG.appendChild(makeVertLabel(name, c.x, slotX(sha), TAG_COLOR, '400'));
+        }
+      }
+
+      // ── show graph, initial pan to show latest commits
+      wrap.style.display = 'block';
+      vscale = 1;
+      vy     = 0;
+      vx     = Math.max(0, wrap.clientWidth - totalW - 8);
+      applyTransform();
+
+      // show toggle buttons
+      document.getElementById('reset-btn').style.display     = '';
+      document.getElementById('toggle-labels').style.display = '';
+      document.getElementById('toggle-tags').style.display   = '';
+
+      // ── legend
+      const legendEl = document.getElementById('legend');
+      legendEl.style.display = 'flex';
+
+      const branchLegend = branchMeta.map(b =>
+        `<span class="legend-item"><span class="legend-dot" style="background:${b.color}"></span>${escHtml(b.name)}</span>`
+      ).join('');
+
+      const tagEntries = Object.values(tagMap).flat();
+      const tagLegend = tagEntries.length
+        ? `<span class="legend-label">tags</span>` +
+          tagEntries.slice(0, 20).map(n =>
+            `<span class="legend-item"><span class="legend-tag" style="background:${TAG_COLOR}"></span>${escHtml(n)}</span>`
+          ).join('') +
+          (tagEntries.length > 20 ? `<span class="legend-item" style="color:#bbb">+${tagEntries.length - 20} more</span>` : '')
+        : '';
+
+      legendEl.innerHTML =
+        `<span class="legend-section"><span class="legend-label">branches</span>${branchLegend}</span>` +
+        (tagLegend ? `<span class="legend-section">${tagLegend}</span>` : '');
+    }
+
+    // ── zoom / pan ─────────────────────────────────────────────────────────
+    function applyTransform() {
+      document.getElementById('viewport').setAttribute(
+        'transform', `translate(${vx},${vy}) scale(${vscale})`
+      );
+    }
+
+    function resetView() {
+      vscale = 1;
+      vy     = 0;
+      const wrap   = document.getElementById('graph-wrap');
+      const totalW = PAD_LEFT + orderedShas.length * COMMIT_SPACING + PAD_RIGHT;
+      vx = Math.max(0, wrap.clientWidth - totalW - 8);
+      applyTransform();
+    }
+
+    (function setupInteraction() {
+      const svg  = document.getElementById('graph-svg');
+      const wrap = document.getElementById('graph-wrap');
+
+      svg.addEventListener('wheel', e => {
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+        const r      = svg.getBoundingClientRect();
+        const mx     = e.clientX - r.left;
+        const my     = e.clientY - r.top;
+        vx     = mx - (mx - vx) * factor;
+        vy     = my - (my - vy) * factor;
+        vscale = Math.min(5, Math.max(0.15, vscale * factor));
+        applyTransform();
+      }, { passive: false });
+
+      svg.addEventListener('mousedown', e => {
+        if (e.button !== 0) return;
+        dragging   = true;
+        dragStartX = e.clientX; dragStartY = e.clientY;
+        dragVX     = vx;        dragVY     = vy;
+        wrap.classList.add('panning');
+      });
+
+      window.addEventListener('mousemove', e => {
+        if (!dragging) return;
+        vx = dragVX + e.clientX - dragStartX;
+        vy = dragVY + e.clientY - dragStartY;
+        applyTransform();
+      });
+
+      window.addEventListener('mouseup', () => {
+        dragging = false;
+        wrap.classList.remove('panning');
+      });
+    })();
+
+    document.getElementById('username').addEventListener('keydown', e => { if (e.key === 'Enter') loadGraph(); });
+    document.getElementById('repo').addEventListener('keydown',     e => { if (e.key === 'Enter') loadGraph(); });
+  </script>
+</body>
+</html>
