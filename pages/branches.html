@@ -110,12 +110,20 @@
       const bf = document.getElementById('branch-filter').value;
       const user = document.getElementById('username').value.trim();
 
-      let repos = allRepos.filter(r => {
+      // Base set: only fork/archived toggles applied — used for stats so counts
+      // always reflect what the toggles show, unaffected by text/branch search.
+      const baseRepos = allRepos.filter(r => {
+        if (r.disabled)                  return false;  // always hidden
+        if (!showForks    && r.fork)     return false;
+        if (!showArchived && r.archived) return false;
+        return true;
+      });
+      buildStats(baseRepos);
+
+      let repos = baseRepos.filter(r => {
         const matchText = r.name.toLowerCase().includes(search) || (r.default_branch || '').toLowerCase().includes(search);
         if (!matchText) return false;
         if (bf !== 'all' && r.default_branch !== bf) return false;
-        if (!showForks    && r.fork)     return false;
-        if (!showArchived && r.archived) return false;
         return true;
       });
 
@@ -244,7 +252,6 @@
           page++;
         }
         allRepos.sort((a, b) => a.name.localeCompare(b.name));
-        buildStats(allRepos);
         render();
         // Kick off PR status fetch in the background — fills in cells one by one
         loadPRStatuses(user, allRepos);
