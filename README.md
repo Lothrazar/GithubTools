@@ -2,6 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+**Live page:** [lothrazar.github.io/GithubTools](https://lothrazar.github.io/GithubTools)
+
 Simple browser-based utilities for auditing your GitHub repos. No backend, no build step, no installs — just open the HTML files directly or serve them statically.
 
 ## Tools
