@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <circle cx="50" cy="50" r="50" fill="white"/>
+
+  <!-- Hammer: head upper-right, handle lower-left -->
+  <g transform="rotate(-45, 50, 50)" fill="#1a1a18">
+    <rect x="18" y="46" width="40" height="8" rx="3"/>
+    <rect x="57" y="43" width="24" height="14" rx="2"/>
+    <path d="M57,43 L57,38 L44,33 L44,38 Z"/>
+    <path d="M57,57 L57,62 L44,67 L44,62 Z"/>
+  </g>
+
+  <!-- Wrench: jaw upper-left, round lower-right -->
+  <g transform="rotate(45, 50, 50)" fill="#1a1a18">
+    <rect x="27" y="46" width="46" height="8" rx="4"/>
+    <rect x="21" y="37" width="11" height="9" rx="2"/>
+    <rect x="21" y="54" width="11" height="9" rx="2"/>
+    <circle cx="72" cy="50" r="7"/>
+  </g>
+</svg>
