@@ -11,7 +11,7 @@
     .progress-wrap { margin-top: 1rem; }
     .progress-label { font-size: 12px; color: #888; margin-bottom: 4px; }
     .progress-bar-bg { background: #e8e8e4; border-radius: 99px; height: 6px; overflow: hidden; }
-    .progress-bar-fill { background: #185FA5; height: 6px; border-radius: 99px; transition: width 0.2s; }
+    .progress-bar-fill { background: var(--blue); height: 6px; border-radius: 99px; transition: width 0.2s; }
     .hint { font-size: 12px; color: #aaa; margin-top: 6px; }
 
     .graph-wrap {
@@ -137,12 +137,6 @@
       while (g.firstChild) g.removeChild(g.firstChild);
     }
 
-    function escHtml(s) {
-      return String(s)
-        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    }
-
     // ── ui helpers ─────────────────────────────────────────────────────────
     function setProgress(pct, label) {
       document.getElementById('progress-bar').style.width   = pct + '%';
@@ -164,26 +158,10 @@
     }
 
     // ── api ────────────────────────────────────────────────────────────────
-    async function apiFetch(url) {
-      const res = await fetch(url, { headers: authHeaders() });
-      if (res.status === 403 || res.status === 429) {
-        const j = await res.json().catch(() => ({}));
-        const extra = !getToken() ? ' Set an API token in Settings for higher rate limits.' : '';
-        throw new Error((j.message || `API error ${res.status}`) + extra);
-      }
-      if (!res.ok) throw new Error(`API error ${res.status} — check the username and repo name.`);
-      return res.json();
-    }
+    const notOkMessage = status => `API error ${status} — check the username and repo name.`;
 
-    async function fetchPages(url, maxPages = 3) {
-      let out = [];
-      for (let p = 1; p <= maxPages; p++) {
-        const sep  = url.includes('?') ? '&' : '?';
-        const data = await apiFetch(`${url}${sep}per_page=100&page=${p}`);
-        out = out.concat(data);
-        if (data.length < 100) break;
-      }
-      return out;
+    function fetchPages(url, maxPages = 3) {
+      return fetchAllPages(url, { maxPages, notOkMessage });
     }
 
     // ── load ───────────────────────────────────────────────────────────────
@@ -212,7 +190,8 @@
       try {
         setProgress(5, 'Fetching repo info…');
         const info = await apiFetch(
-          `https://api.github.com/repos/${encodeURIComponent(user)}/${encodeURIComponent(repo)}`
+          `https://api.github.com/repos/${encodeURIComponent(user)}/${encodeURIComponent(repo)}`,
+          notOkMessage
         );
 
         setProgress(10, 'Fetching branches…');

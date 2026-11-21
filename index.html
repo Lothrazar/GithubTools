@@ -5,40 +5,40 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GitHub Tools</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="css/shared.css" />
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: system-ui, sans-serif; background: #f5f5f2; color: #1a1a18; min-height: 100vh; padding: 3rem 1.5rem; display: flex; flex-direction: column; }
+    body { padding: 3rem 1.5rem; display: flex; flex-direction: column; }
 
     .header { max-width: 680px; margin: 0 auto 2.5rem; }
     .header-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }
     .header-left { display: flex; align-items: center; gap: 12px; }
-    .logo { width: 32px; height: 32px; border: 0.5px solid #ddd; border-radius: 50%; }
-    h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; }
-    .tagline { font-size: 13px; color: #888; line-height: 1.5; }
+    .logo { width: 32px; height: 32px; border: 0.5px solid var(--grey-200); border-radius: 50%; }
+    h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; margin-bottom: 0; }
+    .tagline { font-size: 13px; color: var(--grey-600); line-height: 1.5; }
 
-    .settings-link { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #888; text-decoration: none; padding: 5px 10px; border-radius: 8px; border: 0.5px solid #ddd; background: #fff; white-space: nowrap; }
-    .settings-link:hover { color: #444; border-color: #aaa; text-decoration: none; }
+    .settings-link { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--grey-600); text-decoration: none; padding: 5px 10px; border-radius: 8px; border: 0.5px solid var(--grey-200); background: #fff; white-space: nowrap; }
+    .settings-link:hover { color: var(--grey-700); border-color: var(--grey-400); text-decoration: none; }
     .settings-badge { font-size: 10px; }
-    .settings-badge.set   { color: #3B6D11; }
+    .settings-badge.set   { color: var(--green); }
     .settings-badge.unset { color: #bbb; }
 
     .grid { max-width: 680px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
 
-    .card { background: #fff; border: 0.5px solid #ddd; border-radius: 10px; padding: 1.25rem 1.25rem 1rem; text-decoration: none; color: #1a1a18; display: flex; flex-direction: column; gap: 8px; transition: border-color 0.15s, box-shadow 0.15s; }
-    .card:hover { border-color: #aaa; box-shadow: 0 2px 8px rgba(0,0,0,0.06); text-decoration: none; }
+    .card { background: #fff; border: 0.5px solid var(--grey-200); border-radius: 10px; padding: 1.25rem 1.25rem 1rem; text-decoration: none; color: var(--grey-900); display: flex; flex-direction: column; gap: 8px; transition: border-color 0.15s, box-shadow 0.15s; }
+    .card:hover { border-color: var(--grey-400); box-shadow: 0 2px 8px rgba(0,0,0,0.06); text-decoration: none; }
 
     .card-icon { font-size: 20px; line-height: 1; }
     .card-title { font-size: 15px; font-weight: 500; }
-    .card-desc { font-size: 12px; color: #888; line-height: 1.55; flex: 1; }
+    .card-desc { font-size: 12px; color: var(--grey-600); line-height: 1.55; flex: 1; }
 
     .card-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
     .tag { font-size: 10px; padding: 2px 8px; border-radius: 99px; border: 0.5px solid; }
-    .tag-blue   { background: #EBF3FB; color: #185FA5; border-color: #A9C9E8; }
-    .tag-green  { background: #EAF3DE; color: #3B6D11; border-color: #C0DD97; }
-    .tag-orange { background: #FAEEDA; color: #854F0B; border-color: #FAC775; }
+    .tag-blue   { background: #EBF3FB; color: var(--blue); border-color: #A9C9E8; }
+    .tag-green  { background: #EAF3DE; color: var(--green); border-color: #C0DD97; }
+    .tag-orange { background: #FAEEDA; color: var(--amber); border-color: #FAC775; }
 
     .footer { max-width: 680px; margin: auto auto 0; font-size: 11px; color: #bbb; display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
-    .footer a { color: #aaa; }
+    .footer a { color: var(--grey-400); }
     .footer a:hover { color: #555; text-decoration: none; }
     .footer-source { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
   </style>

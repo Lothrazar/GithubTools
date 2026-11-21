@@ -12,20 +12,20 @@
     .col-pr      { width: 36px; min-width: 36px; text-align: center; padding: 0 4px; }
     .col-name    { width: 33%; }
     .col-branch  { width: 22%; }
-    .col-stars   { width: 8%; text-align: center; font-size: 12px; color: #888; }
-    .col-issues  { width: 8%; text-align: center; font-size: 12px; color: #888; }
+    .col-stars   { width: 8%; text-align: center; font-size: 12px; color: var(--grey-600); }
+    .col-issues  { width: 8%; text-align: center; font-size: 12px; color: var(--grey-600); }
     .col-lang    { width: 10%; font-size: 12px; color: #666; }
-    .col-license { width: 12%; font-size: 11px; color: #888; }
-    .col-updated { width: 12%; font-size: 12px; color: #888; }
+    .col-license { width: 12%; font-size: 11px; color: var(--grey-600); }
+    .col-updated { width: 12%; font-size: 12px; color: var(--grey-600); }
     .pr-alert    { font-size: 14px; cursor: default; }
-    .pr-loading  { color: #ccc; font-size: 12px; }
-    .row-archived td { background: #f4f4f2; color: #aaa; }
+    .pr-loading  { color: var(--grey-300); font-size: 12px; }
+    .row-archived td { background: #f4f4f2; color: var(--grey-400); }
     .row-archived td a { color: #bbb; }
     .row-fork td { background: #f0f6ff; }
-    .btn-active  { outline: 2px solid #185FA5; outline-offset: -2px; }
+    .btn-active  { outline: 2px solid var(--blue); outline-offset: -2px; }
     .stat        { cursor: pointer; }
     .stat:hover  { background: #f0f0ec; }
-    .stat-active { outline: 2px solid #185FA5; outline-offset: -2px; }
+    .stat-active { outline: 2px solid var(--blue); outline-offset: -2px; }
   </style>
 </head>
 <body>
@@ -112,7 +112,7 @@
     function render() {
       const search = document.getElementById('search').value.toLowerCase();
       const bf = document.getElementById('branch-filter').value;
-      const user = document.getElementById('username').value.trim();
+      const user = escHtml(document.getElementById('username').value.trim());
 
       // Base set: only fork/archived toggles applied — used for stats so counts
       // always reflect what the toggles show, unaffected by text/branch search.
@@ -146,6 +146,7 @@
       }
 
       const rows = repos.map(r => {
+        const name = escHtml(r.name);
         const updated = r.pushed_at
           ? new Date(r.pushed_at).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' })
           : '—';
@@ -157,12 +158,12 @@
         const rowClass = r.archived ? 'row-archived' : r.fork ? 'row-fork' : '';
         return `<tr${rowClass ? ` class="${rowClass}"` : ''}>
           ${prCell}
-          <td class="col-name"><a href="https://github.com/${user}/${r.name}" target="_blank">${r.name}</a></td>
-          <td class="col-branch"><span class="branch">${r.default_branch || '—'}</span></td>
+          <td class="col-name"><a href="https://github.com/${user}/${name}" target="_blank">${name}</a></td>
+          <td class="col-branch"><span class="branch">${escHtml(r.default_branch || '—')}</span></td>
           <td class="col-stars">${r.stargazers_count ?? '—'}</td>
           <td class="col-issues">${r.open_issues_count ?? '—'}</td>
-          <td class="col-lang">${r.language || '—'}</td>
-          <td class="col-license">${r.license?.spdx_id || '—'}</td>
+          <td class="col-lang">${escHtml(r.language || '—')}</td>
+          <td class="col-license">${escHtml(r.license?.spdx_id || '—')}</td>
           <td class="col-updated">${updated}</td>
         </tr>`;
       }).join('');
@@ -187,9 +188,9 @@
       const currentSearch = document.getElementById('search').value;
       document.getElementById('stats').innerHTML = sorted.map(([b, c]) => {
         const active = currentSearch === b;
-        return `<div class="stat${active ? ' stat-active' : ''}" style="cursor:pointer" onclick="statClick(this)" data-branch="${b.replace(/&/g,'&amp;').replace(/"/g,'&quot;')}">
+        return `<div class="stat${active ? ' stat-active' : ''}" style="cursor:pointer" onclick="statClick(this)" data-branch="${escHtml(b)}">
           <div class="stat-val">${c}</div>
-          <div class="stat-lbl">${b}</div>
+          <div class="stat-lbl">${escHtml(b)}</div>
         </div>`;
       }).join('');
     }
@@ -249,22 +250,11 @@
       document.getElementById('load-btn').disabled = true;
 
       allRepos = [];
-      let page = 1;
       try {
-        while (true) {
-          const res = await fetch(`https://api.github.com/users/${encodeURIComponent(user)}/repos?per_page=100&page=${page}`, { headers: authHeaders() });
-          if (res.status === 403 || res.status === 429) {
-            const msg = await res.json().catch(() => ({}));
-            const extra = !getToken() ? ' Set an API token on the home page to increase your rate limit to 5,000/hr.' : '';
-            throw new Error((msg.message || `API error ${res.status}`) + extra);
-          }
-          if (!res.ok) throw new Error(`GitHub API returned ${res.status} — check the username`);
-          const data = await res.json();
-          if (!data.length) break;
-          allRepos = allRepos.concat(data);
-          if (data.length < 100) break;
-          page++;
-        }
+        allRepos = await fetchAllPages(
+          `https://api.github.com/users/${encodeURIComponent(user)}/repos`,
+          { notOkMessage: status => `GitHub API returned ${status} — check the username` }
+        );
         allRepos.sort((a, b) => a.name.localeCompare(b.name));
         render();
         // Kick off PR status fetch in the background — fills in cells one by one

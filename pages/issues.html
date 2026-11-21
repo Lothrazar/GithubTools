@@ -9,11 +9,11 @@
   <style>
     td.num { font-variant-numeric: tabular-nums; text-align: right; }
     th.num { text-align: right; }
-    .zero { color: #ccc; }
+    .zero { color: var(--grey-300); }
     .has-items { font-weight: 500; }
-    .pr-count { color: #185FA5; }
-    .untagged-count { color: #854F0B; }
-    .tagged-count { color: #3B6D11; }
+    .pr-count { color: var(--blue); }
+    .untagged-count { color: var(--amber); }
+    .tagged-count { color: var(--green); }
     .col-name { width: 32%; }
     .col-pr { width: 17%; }
     .col-untagged { width: 17%; }
@@ -21,7 +21,7 @@
     .col-total { width: 17%; }
     .progress-wrap { margin-bottom: 1.25rem; }
     .progress-bar-bg { background: #e8e8e4; border-radius: 99px; height: 6px; overflow: hidden; }
-    .progress-bar-fill { background: #3B6D11; height: 6px; border-radius: 99px; transition: width 0.2s; }
+    .progress-bar-fill { background: var(--green); height: 6px; border-radius: 99px; transition: width 0.2s; }
     .progress-label { font-size: 12px; color: #888; margin-bottom: 4px; }
     .hint { font-size: 12px; color: #aaa; margin-top: 6px; }
   </style>
@@ -63,7 +63,7 @@
     let allData = [];
     let sortCol = 'name';
     let sortDir = 1;
-    let cancelled = false;
+    let auditGen = 0;  // incremented to cancel an in-flight audit
 
     const cols = [
       { key: 'name',     label: 'Repo',             cls: 'col-name',         num: false },
@@ -110,9 +110,9 @@
 
       document.getElementById('stats').innerHTML = `
         <div class="stat"><div class="stat-val">${allData.length}</div><div class="stat-lbl">Repos scanned</div></div>
-        <div class="stat"><div class="stat-val" style="color:#185FA5">${totalPRs}</div><div class="stat-lbl">Open PRs</div></div>
-        <div class="stat"><div class="stat-val" style="color:#854F0B">${totalUntagged}</div><div class="stat-lbl">Untagged issues</div></div>
-        <div class="stat"><div class="stat-val" style="color:#3B6D11">${totalTagged}</div><div class="stat-lbl">Tagged issues</div></div>
+        <div class="stat"><div class="stat-val" style="color:var(--blue)">${totalPRs}</div><div class="stat-lbl">Open PRs</div></div>
+        <div class="stat"><div class="stat-val" style="color:var(--amber)">${totalUntagged}</div><div class="stat-lbl">Untagged issues</div></div>
+        <div class="stat"><div class="stat-val" style="color:var(--green)">${totalTagged}</div><div class="stat-lbl">Tagged issues</div></div>
         <div class="stat"><div class="stat-val">${reposNeedAttn}</div><div class="stat-lbl">Need attention</div></div>
       `;
 
@@ -121,7 +121,7 @@
         return;
       }
 
-      const user = document.getElementById('username').value.trim();
+      const user = escHtml(document.getElementById('username').value.trim());
       const thead = `<thead><tr>${cols.map(c => {
         const active = sortCol === c.key;
         const arrow = active ? (sortDir === 1 ? '▲' : '▼') : '▲';
@@ -130,12 +130,13 @@
       }).join('')}</tr></thead>`;
 
       const rows = data.map(r => {
-        const prCell     = r.prs      > 0 ? `<a href="https://github.com/${user}/${r.name}/pulls" target="_blank" class="has-items pr-count">${r.prs}</a>` : `<span class="zero">0</span>`;
-        const untagCell  = r.untagged > 0 ? `<a href="https://github.com/${user}/${r.name}/issues?q=is%3Aissue+is%3Aopen+no%3Alabel" target="_blank" class="has-items untagged-count">${r.untagged}</a>` : `<span class="zero">0</span>`;
-        const taggedCell = r.tagged   > 0 ? `<a href="https://github.com/${user}/${r.name}/issues" target="_blank" class="has-items tagged-count">${r.tagged}</a>` : `<span class="zero">0</span>`;
+        const name        = escHtml(r.name);
+        const prCell     = r.prs      > 0 ? `<a href="https://github.com/${user}/${name}/pulls" target="_blank" class="has-items pr-count">${r.prs}</a>` : `<span class="zero">0</span>`;
+        const untagCell  = r.untagged > 0 ? `<a href="https://github.com/${user}/${name}/issues?q=is%3Aissue+is%3Aopen+no%3Alabel" target="_blank" class="has-items untagged-count">${r.untagged}</a>` : `<span class="zero">0</span>`;
+        const taggedCell = r.tagged   > 0 ? `<a href="https://github.com/${user}/${name}/issues" target="_blank" class="has-items tagged-count">${r.tagged}</a>` : `<span class="zero">0</span>`;
         const totalCell  = r.total    > 0 ? `<span class="has-items">${r.total}</span>` : `<span class="zero">0</span>`;
         return `<tr>
-          <td class="col-name"><a href="https://github.com/${user}/${r.name}/issues" target="_blank">${r.name}</a></td>
+          <td class="col-name"><a href="https://github.com/${user}/${name}/issues" target="_blank">${name}</a></td>
           <td class="col-pr num">${prCell}</td>
           <td class="col-untagged num">${untagCell}</td>
           <td class="col-tagged num">${taggedCell}</td>
@@ -147,34 +148,14 @@
     }
 
     function cancelAudit() {
-      cancelled = true;
-    }
-
-    async function fetchAllPages(url) {
-      let results = [];
-      let page = 1;
-      while (true) {
-        if (cancelled) throw new Error('cancelled');
-        const res = await fetch(`${url}&page=${page}&per_page=100`, { headers: authHeaders() });
-        if (res.status === 403 || res.status === 429) {
-          const msg = await res.json().catch(() => ({}));
-          const extra = !getToken() ? ' Set an API token on the home page to increase your rate limit to 5,000/hr.' : '';
-          throw new Error((msg.message || `API error ${res.status}`) + extra);
-        }
-        if (!res.ok) throw new Error(`API error ${res.status}`);
-        const data = await res.json();
-        results = results.concat(data);
-        if (data.length < 100) break;
-        page++;
-      }
-      return results;
+      auditGen++;  // invalidates the in-flight audit
     }
 
     async function startAudit() {
       const user = document.getElementById('username').value.trim();
       if (!user) return;
 
-      cancelled = false;
+      const gen = ++auditGen;
       allData = [];
       const errEl = document.getElementById('error');
       errEl.style.display = 'none';
@@ -186,11 +167,12 @@
       document.getElementById('hint').textContent = '';
 
       try {
-        const repos = await fetchAllPages(`https://api.github.com/users/${encodeURIComponent(user)}/repos?type=owner`);
+        const isCancelled = () => gen !== auditGen;
+        const repos = await fetchAllPages(`https://api.github.com/users/${encodeURIComponent(user)}/repos?type=owner`, { isCancelled });
         const ownRepos = repos.filter(r => !r.fork && !r.archived);
 
         for (let i = 0; i < ownRepos.length; i++) {
-          if (cancelled) break;
+          if (isCancelled()) break;
           const r = ownRepos[i];
           const pct = Math.round(((i + 1) / ownRepos.length) * 100);
           document.getElementById('progress-bar').style.width = pct + '%';
@@ -200,8 +182,8 @@
 
           if (r.open_issues_count > 0) {
             const [issuesRaw, prsRaw] = await Promise.all([
-              fetchAllPages(`https://api.github.com/repos/${user}/${r.name}/issues?state=open`),
-              fetchAllPages(`https://api.github.com/repos/${user}/${r.name}/pulls?state=open`),
+              fetchAllPages(`https://api.github.com/repos/${user}/${r.name}/issues?state=open`, { isCancelled }),
+              fetchAllPages(`https://api.github.com/repos/${user}/${r.name}/pulls?state=open`, { isCancelled }),
             ]);
             prs = prsRaw.length;
             const issues = issuesRaw.filter(i => !i.pull_request);
@@ -213,7 +195,7 @@
           render();
         }
 
-        if (cancelled) {
+        if (isCancelled()) {
           document.getElementById('hint').textContent = `Cancelled after scanning ${allData.length} repos.`;
         }
       } catch (e) {
