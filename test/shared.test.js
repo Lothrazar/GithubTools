@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { escHtml, fetchAllPages, apiFetch } = require('../js/shared.js');
+const { escHtml, errorHtml, fetchAllPages, apiFetch } = require('../js/shared.js');
 
 test('escHtml escapes <, >, &, and "', () => {
   assert.equal(escHtml('<img src=x>'), '&lt;img src=x&gt;');
@@ -80,4 +80,13 @@ test('apiFetch returns parsed JSON for a single non-paginated request', async (t
   }));
   const result = await apiFetch('https://api.example.com/repos/x/y');
   assert.deepEqual(result, { name: 'GithubTools' });
+});
+
+test('errorHtml links the word documentation to the settings page in the GitHub rate limit message', () => {
+  const out = errorHtml('API rate limit exceeded. Check out the documentation for more details.');
+  assert.match(out, /Check out the <a href="settings\.html">documentation<\/a> for more details\./);
+});
+
+test('errorHtml escapes HTML and leaves other messages without a link', () => {
+  assert.equal(errorHtml('bad <b>name</b>'), 'bad &lt;b&gt;name&lt;/b&gt;');
 });

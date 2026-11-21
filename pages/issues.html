@@ -200,7 +200,7 @@
         }
       } catch (e) {
         if (e.message !== 'cancelled') {
-          errEl.textContent = e.message;
+          errEl.innerHTML = errorHtml(e.message);
           errEl.style.display = 'block';
         }
       } finally {

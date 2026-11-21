@@ -145,7 +145,7 @@
 
     function showError(msg) {
       const e = document.getElementById('error');
-      e.textContent   = msg;
+      e.innerHTML     = errorHtml(msg);
       e.style.display = msg ? 'block' : 'none';
     }
 

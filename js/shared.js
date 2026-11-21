@@ -35,6 +35,19 @@ function escHtml(s) {
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// Where the word "documentation" in GitHub's rate-limit message should point: our Settings page
+// (relative to the tool pages in pages/, which is where error messages are shown)
+const SETTINGS_URL = 'settings.html';
+
+// Escapes an error message for innerHTML and turns the "documentation" in
+// "Check out the documentation for more details" into a link to the Settings page.
+function errorHtml(message) {
+  return escHtml(message).replace(
+    /Check out the documentation/,
+    `Check out the <a href="${SETTINGS_URL}">documentation</a>`
+  );
+}
+
 async function checkGitHubResponse(res, notOkMessage) {
   if (res.status === 403 || res.status === 429) {
     const msg = await res.json().catch(() => ({}));
@@ -68,5 +81,5 @@ async function fetchAllPages(url, { maxPages = Infinity, isCancelled, notOkMessa
 
 // CommonJS export for `node --test` — no-op in the browser (module is undefined there).
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { getToken, authHeaders, escHtml, checkGitHubResponse, apiFetch, fetchAllPages };
+  module.exports = { getToken, authHeaders, escHtml, errorHtml, checkGitHubResponse, apiFetch, fetchAllPages };
 }

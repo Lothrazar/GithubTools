@@ -261,7 +261,7 @@
         loadPRStatuses(user, allRepos);
       } catch (e) {
         document.getElementById('table-wrap').innerHTML = '';
-        errEl.textContent = e.message;
+        errEl.innerHTML = errorHtml(e.message);
         errEl.style.display = 'block';
       } finally {
         document.getElementById('load-btn').disabled = false;
